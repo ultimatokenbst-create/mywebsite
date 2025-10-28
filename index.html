@@ -13,3 +13,397 @@
     <p>मेरा नाम ... और ये साइट मैंने खुद बनाई है।</p>
   </body>
 </html>
+myshop/
+├─ package.json
+├─ server.js
+├─ db.json
+└─ public/
+   ├─ index.html
+   ├─ products.html
+   ├─ cart.html
+   ├─ style.css
+   └─ app.js
+{
+  "name": "myshop",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "lowdb": "^6.0.1",
+    "nanoid": "^4.0.0",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}
+// server.js
+const express = require('express');
+const { Low } = require('lowdb');
+const { JSONFile } = require('lowdb/node');
+const { nanoid } = require('nanoid');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const path = require('path');
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// lowdb setup
+const file = path.join(__dirname, 'db.json');
+const adapter = new JSONFile(file);
+const db = new Low(adapter);
+
+async function initDB(){
+  await db.read();
+  db.data = db.data || { products: [], orders: [] };
+  await db.write();
+}
+initDB();
+
+// APIs
+
+// get all products (support query ?q= & category= & minPrice=&maxPrice=)
+app.get('/api/products', async (req,res)=>{
+  await db.read();
+  let products = db.data.products || [];
+  const { q, category, minPrice, maxPrice } = req.query;
+  if(q){
+    const term = q.toLowerCase();
+    products = products.filter(p => p.title.toLowerCase().includes(term) || p.description.toLowerCase().includes(term));
+  }
+  if(category){
+    products = products.filter(p => p.category === category);
+  }
+  if(minPrice) products = products.filter(p => p.price >= Number(minPrice));
+  if(maxPrice) products = products.filter(p => p.price <= Number(maxPrice));
+  res.json(products);
+});
+
+// get single product
+app.get('/api/products/:id', async (req,res)=>{
+  await db.read();
+  const p = (db.data.products || []).find(x => x.id === req.params.id);
+  if(!p) return res.status(404).json({error:'Product not found'});
+  res.json(p);
+});
+
+// create product (simple admin endpoint - no auth)
+app.post('/api/products', async (req,res)=>{
+  await db.read();
+  const { title, description, price, images, category, stock } = req.body;
+  const product = {
+    id: nanoid(8),
+    title,
+    description,
+    price: Number(price),
+    images: images || [],
+    category: category || 'General',
+    stock: stock === undefined ? 100 : Number(stock),
+    createdAt: Date.now()
+  };
+  db.data.products.push(product);
+  await db.write();
+  res.json(product);
+});
+
+// checkout - mock: create order
+app.post('/api/checkout', async (req,res)=>{
+  await db.read();
+  const { cart, customer } = req.body; // cart: [{id, qty}]
+  if(!cart || !Array.isArray(cart) || cart.length===0) return res.status(400).json({error:'Cart empty'});
+  // compute total, reduce stock
+  let total = 0;
+  const lineItems = [];
+  for(const item of cart){
+    const prod = db.data.products.find(p => p.id === item.id);
+    if(!prod) return res.status(400).json({error:`Product ${item.id} not found`});
+    if(prod.stock < item.qty) return res.status(400).json({error:`Insufficient stock for ${prod.title}`});
+    prod.stock -= item.qty;
+    const amount = prod.price * item.qty;
+    total += amount;
+    lineItems.push({ productId: prod.id, title: prod.title, qty: item.qty, price: prod.price, amount });
+  }
+  const order = {
+    id: 'ORD-' + nanoid(6),
+    customer: customer || {},
+    items: lineItems,
+    total,
+    status: 'PLACED',
+    createdAt: Date.now()
+  };
+  db.data.orders.push(order);
+  await db.write();
+  // NOTE: real payment integration not included — this is a mock order
+  res.json({ success:true, order });
+});
+
+// get orders (admin)
+app.get('/api/orders', async (req,res)=>{
+  await db.read();
+  res.json(db.data.orders || []);
+});
+
+// serve static (frontend handled by public/)
+app.get('*', (req,res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// start
+const port = process.env.PORT || 3000;
+app.listen(port, ()=> console.log('Server running on', port));
+{
+  "products": [
+    {
+      "id": "p1",
+      "title": "Stylish Women Kurti",
+      "description": "Comfortable cotton kurti with beautiful prints.",
+      "price": 499,
+      "images": [],
+      "category": "Clothing",
+      "stock": 120
+    },
+    {
+      "id": "p2",
+      "title": "Wireless Earbuds",
+      "description": "Bluetooth 5.2 earbuds with great battery life.",
+      "price": 999,
+      "images": [],
+      "category": "Electronics",
+      "stock": 50
+    },
+    {
+      "id": "p3",
+      "title": "Portable Mobile Charger 10000mAh",
+      "description": "Slim powerbank with fast charging.",
+      "price": 699,
+      "images": [],
+      "category": "Electronics",
+      "stock": 80
+    }
+  ],
+  "orders": []
+}
+<!-- public/index.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MyShop — Mini Meesho</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1><a href="/">MyShop</a></h1>
+    <div class="search-cart">
+      <input id="search" placeholder="Search products..." />
+      <a href="cart.html" id="cartLink">Cart (0)</a>
+    </div>
+  </header>
+  <main>
+    <section id="filters">
+      <select id="categoryFilter">
+        <option value="">All Categories</option>
+      </select>
+      <input id="minPrice" placeholder="Min price" type="number" />
+      <input id="maxPrice" placeholder="Max price" type="number" />
+      <button id="applyFilter">Apply</button>
+    </section>
+
+    <section id="products" class="grid"></section>
+  </main>
+
+  <template id="productCard">
+    <div class="card">
+      <div class="img">Image</div>
+      <h3 class="title"></h3>
+      <p class="desc"></p>
+      <div class="price"></div>
+      <div class="actions">
+        <button class="view">View</button>
+        <button class="add">Add to cart</button>
+      </div>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
+<!-- public/cart.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Cart — MyShop</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1><a href="/">MyShop</a></h1>
+    <a href="cart.html" id="cartLink">Cart</a>
+  </header>
+
+  <main>
+    <h2>Your Cart</h2>
+    <div id="cartItems"></div>
+    <div id="cartSummary"></div>
+    <div id="checkoutForm" style="display:none;">
+      <h3>Checkout</h3>
+      <input id="custName" placeholder="Your name" /><br/>
+      <input id="custEmail" placeholder="Email" /><br/>
+      <button id="placeOrder">Place Order (Mock)</button>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
+/* public/style.css */
+body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#222}
+header{background:#007acc;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+header a{color:#fff;text-decoration:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;padding:20px}
+.card{border:1px solid #e0e0e0;padding:12px;border-radius:8px;background:#fff}
+.card .img{height:140px;background:#f5f5f5;border-radius:6px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;color:#777}
+.actions{display:flex;gap:8px}
+button{padding:8px 10px;border-radius:6px;border:none;background:#007acc;color:#fff;cursor:pointer}
+button.add{background:#28a745}
+#filters{display:flex;gap:8px;padding:10px;align-items:center}
+main{padding-bottom:60px}
+// public/app.js
+const API = '/api';
+
+async function fetchProducts(q='', category='', minPrice='', maxPrice='') {
+  const params = new URLSearchParams();
+  if(q) params.set('q', q);
+  if(category) params.set('category', category);
+  if(minPrice) params.set('minPrice', minPrice);
+  if(maxPrice) params.set('maxPrice', maxPrice);
+  const res = await fetch(API + '/products?' + params.toString());
+  return res.json();
+}
+
+function getCart(){
+  return JSON.parse(localStorage.getItem('cart') || '[]');
+}
+function saveCart(c){ localStorage.setItem('cart', JSON.stringify(c)); updateCartCount(); }
+function updateCartCount(){
+  const c = getCart().reduce((s,i)=>s+i.qty,0);
+  const el = document.getElementById('cartLink');
+  if(el) el.textContent = `Cart (${c})`;
+}
+
+// render on index
+async function renderProducts() {
+  const productsEl = document.getElementById('products');
+  if(!productsEl) return;
+  const q = document.getElementById('search')?.value || '';
+  const category = document.getElementById('categoryFilter')?.value || '';
+  const minPrice = document.getElementById('minPrice')?.value || '';
+  const maxPrice = document.getElementById('maxPrice')?.value || '';
+  const products = await fetchProducts(q, category, minPrice, maxPrice);
+  productsEl.innerHTML = '';
+  const tpl = document.getElementById('productCard');
+  products.forEach(p => {
+    const node = tpl.content.cloneNode(true);
+    node.querySelector('.title').textContent = p.title;
+    node.querySelector('.desc').textContent = p.description;
+    node.querySelector('.price').textContent = '₹ ' + p.price;
+    node.querySelector('.view').addEventListener('click', ()=> {
+      alert(`${p.title}\n\n${p.description}\n\nPrice: ₹${p.price}`);
+    });
+    node.querySelector('.add').addEventListener('click', ()=> {
+      const cart = getCart();
+      const existing = cart.find(i=>i.id===p.id);
+      if(existing) existing.qty++;
+      else cart.push({ id: p.id, qty: 1 });
+      saveCart(cart);
+      alert('Added to cart');
+    });
+    productsEl.appendChild(node);
+  });
+}
+
+// populate categories from products
+async function populateCategories(){
+  const products = await fetchProducts();
+  const set = new Set(products.map(p=>p.category));
+  const sel = document.getElementById('categoryFilter');
+  if(!sel) return;
+  set.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    sel.appendChild(opt);
+  });
+}
+
+// cart page
+async function renderCartPage(){
+  const cartEl = document.getElementById('cartItems');
+  if(!cartEl) return;
+  const cart = getCart();
+  if(cart.length===0) { cartEl.innerHTML = '<p>Cart is empty</p>'; return; }
+  const products = await fetchProducts();
+  let total = 0;
+  cartEl.innerHTML = '';
+  cart.forEach(item => {
+    const p = products.find(x=>x.id===item.id);
+    if(!p) return;
+    const div = document.createElement('div');
+    div.innerHTML = `<strong>${p.title}</strong> - ₹${p.price} × ${item.qty} = ₹${p.price * item.qty}
+      <button class="minus">-</button> <button class="plus">+</button> <button class="rem">Remove</button>`;
+    div.querySelector('.minus').addEventListener('click', ()=> {
+      if(item.qty>1) item.qty--; else {
+        const idx = cart.indexOf(item); cart.splice(idx,1);
+      }
+      saveCart(cart); renderCartPage();
+    });
+    div.querySelector('.plus').addEventListener('click', ()=> {
+      item.qty++; saveCart(cart); renderCartPage();
+    });
+    div.querySelector('.rem').addEventListener('click', ()=> {
+      const idx = cart.indexOf(item); cart.splice(idx,1); saveCart(cart); renderCartPage();
+    });
+    cartEl.appendChild(div);
+    total += p.price * item.qty;
+  });
+  document.getElementById('cartSummary').innerHTML = `<h3>Total: ₹${total}</h3>
+    <button id="checkoutBtn">Checkout</button>`;
+  document.getElementById('checkoutBtn').addEventListener('click', ()=> {
+    document.getElementById('checkoutForm').style.display = 'block';
+  });
+
+  document.getElementById('placeOrder')?.addEventListener('click', async ()=>{
+    const name = document.getElementById('custName').value;
+    const email = document.getElementById('custEmail').value;
+    if(!name || !email) return alert('Enter name and email');
+    const res = await fetch(API + '/checkout', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ cart, customer: { name, email } })
+    });
+    const data = await res.json();
+    if(data.error) return alert('Error: '+data.error);
+    alert('Order placed! ID: ' + data.order.id);
+    localStorage.removeItem('cart');
+    updateCartCount();
+    window.location = '/';
+  });
+}
+
+document.addEventListener('DOMContentLoaded', ()=> {
+  updateCartCount();
+  populateCategories();
+  renderProducts();
+  document.getElementById('search')?.addEventListener('input', ()=> renderProducts());
+  document.getElementById('applyFilter')?.addEventListener('click', ()=> renderProducts());
+  renderCartPage();
+});
