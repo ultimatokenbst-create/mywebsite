@@ -1,4 +1,24 @@
- // E-commerce single-file React component
+npx create-react-app myshop
+cd myshop
+npm install -D tailwindcss postcss autoprefixer
+npx tailwindcss init -p
+content: ["./src/**/*.{js,jsx,ts,tsx}"],
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+npm start
+git init
+git add .
+git commit -m "Initial commit - E-commerce site"
+git branch -M main
+git remote add origin https://github.com/<your-username>/myshop.git
+git push -u origin main
+npm install gh-pages --save-dev
+npm run deploy
+npm run deploy
+
+
+// E-commerce single-file React component
 // Usage:
 // 1) Create a React app (Vite / Create React App / Next.js). Ensure Tailwind CSS is set up.
 // 2) Drop this file as a page or component and render it (e.g., in App.jsx import and use <ECommerceApp />).
